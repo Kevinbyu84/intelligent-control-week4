@@ -11,47 +11,40 @@ class DQNAgent:
         self.state_size = state_size
         self.action_size = action_size
         self.memory = deque(maxlen=2000)
-        self.gamma = 0.95           # Discount factor
-        self.epsilon = 1.0          # Exploration rate
+        self.gamma = 0.99  # Discount factor
+        self.epsilon = 1.0  # Exploration rate
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.995
         self.learning_rate = 0.001
-        self.model = self._build_model()  # Model utama
-        self.target_model = self._build_model()  # Target Network
-        self.update_target_model()  # Sinkronisasi awal target model
+        self.model = self._build_model()
+        self.target_model = self._build_model()
+        self.update_target_model()
 
     def _build_model(self):
-        """Membangun model jaringan saraf tiruan untuk DQN"""
-        model = Sequential()
-        model.add(Dense(24, input_dim=self.state_size, activation='relu'))
-        model.add(Dense(24, activation='relu'))
-        model.add(Dense(self.action_size, activation='linear'))
+        model = Sequential([
+            Dense(24, input_dim=self.state_size, activation='relu'),
+            Dense(24, activation='relu'),
+            Dense(self.action_size, activation='linear')
+        ])
         model.compile(loss='mse', optimizer=Adam(learning_rate=self.learning_rate))
         return model
 
     def update_target_model(self):
-        """Menyalin bobot dari model utama ke target model"""
         self.target_model.set_weights(self.model.get_weights())
 
     def remember(self, state, action, reward, next_state, done):
-        """Menyimpan pengalaman ke dalam replay buffer"""
         self.memory.append((state, action, reward, next_state, done))
 
     def act(self, state):
-        """Memilih aksi berdasarkan epsilon-greedy policy"""
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
         act_values = self.model.predict(state, verbose=0)
         return np.argmax(act_values[0])
 
     def replay(self, batch_size):
-        """Pelatihan ulang model berdasarkan sampel dari replay buffer"""
         minibatch = random.sample(self.memory, batch_size)
         for state, action, reward, next_state, done in minibatch:
-            target = reward
-            if not done:
-                # Menggunakan target network untuk prediksi nilai Q masa depan
-                target = reward + self.gamma * np.amax(self.target_model.predict(next_state, verbose=0)[0])
+            target = reward if done else reward + self.gamma * np.amax(self.target_model.predict(next_state, verbose=0)[0])
             target_f = self.model.predict(state, verbose=0)
             target_f[0][action] = target
             self.model.fit(state, target_f, epochs=1, verbose=0)
@@ -59,26 +52,30 @@ class DQNAgent:
             self.epsilon *= self.epsilon_decay
 
 if __name__ == '__main__':
-    env = gym.make('CartPole-v1')
+    env = gym.make('MountainCar-v0')
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.n
     agent = DQNAgent(state_size, action_size)
     episodes = 50
     batch_size = 32
-    update_target_every = 5  # Update target model setiap 5 episode
+    target_update_freq = 10
 
     for e in range(episodes):
         state, _ = env.reset()
         state = np.reshape(state, [1, state_size])
-        for time in range(500):
+        for time in range(200):
             action = agent.act(state)
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
-            reward = reward if not done else -10
+            
+            # Reward shaping: give additional reward for reaching higher positions
+            reward = reward if not done else 100
+            reward += abs(next_state[0] - (-0.5)) * 10
+            
             next_state = np.reshape(next_state, [1, state_size])
             agent.remember(state, action, reward, next_state, done)
             state = next_state
-
+            
             if done:
                 print(f"Episode: {e+1}/{episodes}, Score: {time}, Epsilon: {agent.epsilon:.2f}")
                 break
@@ -86,6 +83,8 @@ if __name__ == '__main__':
         if len(agent.memory) > batch_size:
             agent.replay(batch_size)
 
-        # Update Target Network setiap beberapa episode
-        if e % update_target_every == 0:
+        if e % target_update_freq == 0:
             agent.update_target_model()
+            print("Target Network updated!")
+
+    env.close()
